@@ -19,6 +19,8 @@
 #include "display.h"
 #include "error.h"
 #include "test.h"
+#include "config.h"
+#include "cpuid.h"
 
 #include "test_funcs.h"
 #include "test_helper.h"
@@ -58,9 +60,17 @@ int test_modulo_n(int my_cpu, int iterations, testword_t pattern1, testword_t pa
                 continue;
             }
             test_addr[my_cpu] = (uintptr_t)p;
-            do {
-                write_word(p, pattern1);
-            } while (p <= (pe - n) && (p += n)); // test before increment in case pointer overflows
+            if (enable_nontemporal && cpuid_info.flags.sse2) {
+                do {
+                    write_word_nt(p, pattern1);
+                } while (p <= (pe - n) && (p += n)); // test before increment in case pointer overflows
+                __asm__ __volatile__ ("mfence");
+            }
+            else {
+                do {
+                    write_word(p, pattern1);
+                } while (p <= (pe - n) && (p += n)); // test before increment in case pointer overflows
+            }
             do_tick(my_cpu);
             BAILOUT;
         } while (!at_end && ++pe); // advance pe to next start point
@@ -90,15 +100,29 @@ int test_modulo_n(int my_cpu, int iterations, testword_t pattern1, testword_t pa
                     continue;
                 }
                 test_addr[my_cpu] = (uintptr_t)p;
-                do {
-                    if (k != offset) {
-                        write_word(p, pattern2);
-                    }
-                    k++;
-                    if (k == n) {
-                        k = 0;
-                    }
-                } while (p++ < pe); // test before increment in case pointer overflows
+                if (enable_nontemporal && cpuid_info.flags.sse2) {
+                    do {
+                        if (k != offset) {
+                            write_word_nt(p, pattern2);
+                        }
+                        k++;
+                        if (k == n) {
+                            k = 0;
+                        }
+                    } while (p++ < pe); // test before increment in case pointer overflows
+                    __asm__ __volatile__ ("mfence");
+                }
+                else {
+                    do {
+                        if (k != offset) {
+                            write_word(p, pattern2);
+                        }
+                        k++;
+                        if (k == n) {
+                            k = 0;
+                        }
+                    } while (p++ < pe); // test before increment in case pointer overflows
+                }
                 do_tick(my_cpu);
                 BAILOUT;
             } while (!at_end && ++pe); // advance pe to next start point

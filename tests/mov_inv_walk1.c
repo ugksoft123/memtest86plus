@@ -19,6 +19,8 @@
 #include "display.h"
 #include "error.h"
 #include "test.h"
+#include "config.h"
+#include "cpuid.h"
 
 #include "test_funcs.h"
 #include "test_helper.h"
@@ -59,10 +61,19 @@ int test_mov_inv_walk1(int my_cpu, int iterations, int offset, bool inverse)
                 continue;
             }
             test_addr[my_cpu] = (uintptr_t)p;
-            do {
-                write_word(p, inverse ? ~pattern : pattern);
-                pattern = pattern << 1 | pattern >> (TESTWORD_WIDTH - 1);  // rotate left
-            } while (p++ < pe); // test before increment in case pointer overflows
+            if (enable_nontemporal && cpuid_info.flags.sse2) {
+                do {
+                    write_word_nt(p, inverse ? ~pattern : pattern);
+                    pattern = pattern << 1 | pattern >> (TESTWORD_WIDTH - 1);  // rotate left
+                } while (p++ < pe); // test before increment in case pointer overflows
+                __asm__ __volatile__ ("mfence");
+            }
+            else {
+                do {
+                    write_word(p, inverse ? ~pattern : pattern);
+                    pattern = pattern << 1 | pattern >> (TESTWORD_WIDTH - 1);  // rotate left
+                } while (p++ < pe); // test before increment in case pointer overflows
+            }
             do_tick(my_cpu);
             BAILOUT;
         } while (!at_end && ++pe); // advance pe to next start point
@@ -96,15 +107,29 @@ int test_mov_inv_walk1(int my_cpu, int iterations, int offset, bool inverse)
                     continue;
                 }
                 test_addr[my_cpu] = (uintptr_t)p;
-                do {
-                    testword_t expect = inverse ? ~pattern : pattern;
-                    testword_t actual = read_word(p);
-                    if (unlikely(actual != expect)) {
-                        data_error(p, expect, actual, true);
-                    }
-                    write_word(p, ~expect);
-                    pattern = pattern << 1 | pattern >> (TESTWORD_WIDTH - 1);  // rotate left
-                } while (p++ < pe); // test before increment in case pointer overflows
+                if (enable_nontemporal && cpuid_info.flags.sse2) {
+                    do {
+                        testword_t expect = inverse ? ~pattern : pattern;
+                        testword_t actual = read_word(p);
+                        if (unlikely(actual != expect)) {
+                            data_error(p, expect, actual, true);
+                        }
+                        write_word_nt(p, ~expect);
+                        pattern = pattern << 1 | pattern >> (TESTWORD_WIDTH - 1);  // rotate left
+                    } while (p++ < pe); // test before increment in case pointer overflows
+                    __asm__ __volatile__ ("mfence");
+                }
+                else {
+                    do {
+                        testword_t expect = inverse ? ~pattern : pattern;
+                        testword_t actual = read_word(p);
+                        if (unlikely(actual != expect)) {
+                            data_error(p, expect, actual, true);
+                        }
+                        write_word(p, ~expect);
+                        pattern = pattern << 1 | pattern >> (TESTWORD_WIDTH - 1);  // rotate left
+                    } while (p++ < pe); // test before increment in case pointer overflows
+                }
                 do_tick(my_cpu);
                 BAILOUT;
             } while (!at_end && ++pe); // advance pe to next start point
@@ -133,15 +158,29 @@ int test_mov_inv_walk1(int my_cpu, int iterations, int offset, bool inverse)
                     continue;
                 }
                 test_addr[my_cpu] = (uintptr_t)ps;
-                do {
-                    pattern = pattern >> 1 | pattern << (TESTWORD_WIDTH - 1);  // rotate right
-                    testword_t expect = inverse ? pattern : ~pattern;
-                    testword_t actual = read_word(p);
-                    if (unlikely(actual != expect)) {
-                        data_error(p, expect, actual, true);
-                    }
-                    write_word(p, ~expect);
-                } while (p-- > ps); // test before decrement in case pointer overflows
+                if (enable_nontemporal && cpuid_info.flags.sse2) {
+                    do {
+                        pattern = pattern >> 1 | pattern << (TESTWORD_WIDTH - 1);  // rotate right
+                        testword_t expect = inverse ? pattern : ~pattern;
+                        testword_t actual = read_word(p);
+                        if (unlikely(actual != expect)) {
+                            data_error(p, expect, actual, true);
+                        }
+                        write_word_nt(p, ~expect);
+                    } while (p-- > ps); // test before decrement in case pointer overflows
+                    __asm__ __volatile__ ("mfence");
+                }
+                else {
+                    do {
+                        pattern = pattern >> 1 | pattern << (TESTWORD_WIDTH - 1);  // rotate right
+                        testword_t expect = inverse ? pattern : ~pattern;
+                        testword_t actual = read_word(p);
+                        if (unlikely(actual != expect)) {
+                            data_error(p, expect, actual, true);
+                        }
+                        write_word(p, ~expect);
+                    } while (p-- > ps); // test before decrement in case pointer overflows
+                }
                 do_tick(my_cpu);
                 BAILOUT;
             } while (!at_start && --ps); // advance ps to next start point
